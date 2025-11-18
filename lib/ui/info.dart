@@ -3,6 +3,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:rotaoitimobile/class/classgerais.dart';
 import 'package:rotaoitimobile/db/db_helper.dart';
 import 'package:rotaoitimobile/service/update.dart';
+import 'package:rotaoitimobile/ui/logscreen.dart';
 
 class InfoPage extends StatefulWidget {
   const InfoPage({super.key});
@@ -135,6 +136,29 @@ class _InfoPageState extends State<InfoPage> {
                           style: TextStyle(fontSize: 18, color: Colors.white),
                         ),
                         style: _buttonStyle(Colors.blueAccent),
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const LogScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(
+                          Icons.list_alt,
+                          size: 30,
+                          color: Colors.white,
+                        ),
+                        label: const Text(
+                          "Verificar Logs",
+                          style: TextStyle(fontSize: 18, color: Colors.white),
+                        ),
+                        style: _buttonStyle(
+                          const Color.fromARGB(255, 34, 205, 34),
+                        ),
                       ),
                       const SizedBox(height: 16),
                     ],

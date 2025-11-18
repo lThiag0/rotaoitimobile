@@ -1,45 +1,40 @@
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path/path.dart';
+import 'package:rotaoitimobile/service/logcontroller.dart';
 
 class ForegroundServiceHelper {
   static const platform = MethodChannel("com.example.rotaoitimobile/service");
 
+  static void _log(String message) {
+    LogController.instance.addLog("📱 FLUTTER → $message");
+  }
+
   static Future<void> startLocationService(
     String token, {
     int caminhaoId = 0,
+    required int paradaLongaMinutos,
+    required double garagemLat,
+    required double garagemLon,
   }) async {
     try {
-      //print("🔹 Iniciando serviço com token: $token");
       await platform.invokeMethod("startService", {
         "token": token,
-        "caminhao_id": caminhaoId, // envia para o Android
+        "caminhao_id": caminhaoId,
+        "paradaLongaMinutos": paradaLongaMinutos,
+        "garagemLat": garagemLat,
+        "garagemLon": garagemLon,
       });
-      //print("✅ Serviço de localização iniciado");
+      _log("✅ Serviço de localização iniciado");
     } catch (e) {
-      //print("❌ Erro ao iniciar serviço: $e");
-      ScaffoldMessenger.of(context as BuildContext).showSnackBar(
-        SnackBar(
-          content: Text("Erro ao parar serviço: $e!"),
-          backgroundColor: Colors.green,
-        ),
-      );
+      _log("❌ Erro ao iniciar serviço: $e");
     }
   }
 
   static Future<void> stopLocationService() async {
     try {
-      //print("🔹 Parando serviço");
       await platform.invokeMethod("stopService");
-      //print("✅ Serviço de localização parado");
+      _log("✅ Serviço de localização parado");
     } catch (e) {
-      //print("❌ Erro ao parar serviço: $e");
-      ScaffoldMessenger.of(context as BuildContext).showSnackBar(
-        SnackBar(
-          content: Text("Erro ao parar serviço: $e!"),
-          backgroundColor: Colors.green,
-        ),
-      );
+      _log("❌ Erro ao parar serviço: $e");
     }
   }
 
@@ -48,7 +43,7 @@ class ForegroundServiceHelper {
       final bool isRunning = await platform.invokeMethod("isServiceRunning");
       return isRunning;
     } catch (e) {
-      //print("❌ Erro ao verificar status do serviço: $e");
+      _log("❌ Erro ao verificar status do serviço: $e");
       return false;
     }
   }

@@ -15,9 +15,17 @@ class Caminhao {
   final int id;
   final String nome;
   final String cor;
+  final bool? rastreamentoLigado;
   final String placa;
   final String departamento;
+  final String? empresa;
+  final String? cnpj;
   final int? userId;
+  final String? horarioRastreamento;
+  final String? diasRastreamento;
+  final int? paradaLongaMinutos;
+  final double? garagemLatitude;
+  final double? garagemLongitude;
 
   Caminhao({
     required this.id,
@@ -25,18 +33,59 @@ class Caminhao {
     required this.cor,
     required this.placa,
     required this.departamento,
+    this.rastreamentoLigado,
+    this.empresa,
+    this.cnpj,
     this.userId,
+    this.horarioRastreamento,
+    this.diasRastreamento,
+    this.paradaLongaMinutos,
+    this.garagemLatitude,
+    this.garagemLongitude,
   });
 
   factory Caminhao.fromJson(Map<String, dynamic> json) {
     return Caminhao(
       id: json['id'],
-      nome: json['nome'],
-      cor: json['cor'],
-      placa: json['placa'],
-      departamento: json['departamento'],
+      nome: json['nome'] ?? '',
+      cor: json['cor'] ?? '',
+      placa: json['placa'] ?? '',
+      departamento: json['departamento'] ?? '',
+      rastreamentoLigado:
+          json['rastreamento_ligado'] == 1 ||
+          json['rastreamento_ligado'] == true,
+      empresa: json['empresa'],
+      cnpj: json['cnpj'],
       userId: json['user_id'],
+      horarioRastreamento: json['horario_rastreamento'],
+      diasRastreamento: json['dias_rastreamento'],
+      paradaLongaMinutos: json['parada_longa_minutos'],
+      garagemLatitude: json['garagem_latitude'] != null
+          ? double.tryParse(json['garagem_latitude'].toString())
+          : null,
+      garagemLongitude: json['garagem_longitude'] != null
+          ? double.tryParse(json['garagem_longitude'].toString())
+          : null,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'nome': nome,
+      'cor': cor,
+      'rastreamento_ligado': rastreamentoLigado,
+      'placa': placa,
+      'departamento': departamento,
+      'empresa': empresa,
+      'cnpj': cnpj,
+      'user_id': userId,
+      'horario_rastreamento': horarioRastreamento,
+      'dias_rastreamento': diasRastreamento,
+      'parada_longa_minutos': paradaLongaMinutos,
+      'garagem_latitude': garagemLatitude,
+      'garagem_longitude': garagemLongitude,
+    };
   }
 }
 

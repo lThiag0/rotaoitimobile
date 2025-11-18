@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,8 @@ import 'package:rotaoitimobile/db/db_helper.dart';
 import 'package:rotaoitimobile/service/foreground.dart';
 import 'package:rotaoitimobile/service/update.dart';
 import 'package:rotaoitimobile/ui/entrega.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:rotaoitimobile/service/logcontroller.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -23,11 +26,15 @@ class _HomePageState extends State<HomePage> {
   final updater = UpdateApp();
 
   String userName = "";
+  String userEmail = "";
   int? userIdLogado;
   String userCaminhao = "";
   int? userIdCaminhao;
   String userCaminhaoCor = "";
   String userCaminhaoPlaca = "";
+  int userCaminhaoParadaMin = 10;
+  double userCaminhaoGaragemLat = 0.0;
+  double userCaminhaoGaragemLon = 0.0;
   String? token;
   bool loading = true;
   bool gpsAtivo = false;
@@ -39,6 +46,10 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _init();
+  }
+
+  static void _log(String message) {
+    LogController.instance.addLog("📱 FLUTTER → $message");
   }
 
   Future<void> _init() async {
@@ -64,9 +75,13 @@ class _HomePageState extends State<HomePage> {
     // Atualiza informações do usuário
     setState(() {
       userName = usuario['nome'] ?? "Usuário";
+
+      userEmail = usuario['email'] ?? "email deslogado";
       userIdLogado = usuario['id_usuario'];
       token = usuario['token'];
     });
+
+    await sincronizarCaminhoes();
 
     // Busca caminhão vinculado ao usuário
     final caminhao = await _dbHelper.buscarCaminhaoPorUsuario(userIdLogado!);
@@ -76,21 +91,57 @@ class _HomePageState extends State<HomePage> {
       userIdCaminhao = caminhao?['id'] ?? 0;
       userCaminhaoCor = caminhao?['cor'] ?? "#FFFFFF";
       userCaminhaoPlaca = caminhao?['placa'] ?? "SEM-PLACA";
+      userCaminhaoParadaMin = caminhao?['parada_longa_minutos'] ?? 10;
+      userCaminhaoGaragemLat = caminhao?['garagem_latitude'] ?? 0.0;
+      userCaminhaoGaragemLon = caminhao?['garagem_longitude'] ?? 0.0;
     });
 
     // Inicia serviço de localização apenas se houver caminhão vinculado
     await iniciarServico(
       usuarioToken: usuario['token'] ?? '',
       caminhaoId: userIdCaminhao ?? 0,
+      paradaLongaMinutos: userCaminhaoParadaMin,
+      garagemLat: userCaminhaoGaragemLat,
+      garagemLon: userCaminhaoGaragemLon,
     );
 
     // Carrega entregas
     await _carregarEntregas();
   }
 
+  Future<String?> pedirSenhaUsuario() async {
+    String senha = "";
+    return await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Confirme sua senha"),
+          content: TextField(
+            obscureText: true,
+            onChanged: (value) => senha = value,
+            decoration: const InputDecoration(hintText: "Digite sua senha"),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text("Cancelar"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, senha),
+              child: const Text("Confirmar"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> iniciarServico({
     required String usuarioToken,
     required int caminhaoId,
+    required int paradaLongaMinutos,
+    required double garagemLat,
+    required double garagemLon,
   }) async {
     final isRunning = await ForegroundServiceHelper.isServiceRunning();
     if (caminhaoId > 0 && usuarioToken.isNotEmpty) {
@@ -98,15 +149,17 @@ class _HomePageState extends State<HomePage> {
         await ForegroundServiceHelper.startLocationService(
           usuarioToken,
           caminhaoId: caminhaoId,
+          paradaLongaMinutos: paradaLongaMinutos,
+          garagemLat: garagemLat,
+          garagemLon: garagemLon,
         );
-        //print('🚀 Serviço de localização iniciado.');
       } else {
-        //print('✅ Serviço de localização já está ativo.');
+        _log('✅ Serviço de localização já está ativo.');
       }
     } else {
       if (isRunning) {
         await ForegroundServiceHelper.stopLocationService();
-        //print('⚠️ Caminhão ou token inválido. Serviço desligado.');
+        _log('⚠️ Caminhão ou token inválido. Serviço desligado.');
       }
     }
     _verificarServico();
@@ -126,7 +179,7 @@ class _HomePageState extends State<HomePage> {
     final conexao = await Connectivity().checkConnectivity();
 
     if (conexao != ConnectivityResult.none) {
-      await sincronizarCaminhoes();
+      //await sincronizarCaminhoes();
 
       try {
         final response = await http.get(
@@ -141,7 +194,6 @@ class _HomePageState extends State<HomePage> {
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body) as Map<String, dynamic>;
-          //print("API: $data");
 
           // Entregas
           final List<dynamic> entregasJson = data['data'] ?? [];
@@ -158,11 +210,11 @@ class _HomePageState extends State<HomePage> {
           // Salva no SQLite
           await _dbHelper.salvarEntregas(entregasApi);
         } else {
-          //print("Erro API: ${response.statusCode} - ${response.body}");
+          _log("Erro API: ${response.statusCode}");
           //mostrarMensagem("Erro API: ${response.statusCode}");
         }
       } catch (e) {
-        //print("Erro ao carregar entregas online: $e");
+        _log("Erro ao carregar entregas online: $e");
         mostrarMensagem("Erro ao carregar entregas online!");
       }
     } else {
@@ -174,9 +226,8 @@ class _HomePageState extends State<HomePage> {
             entregas = offlineData;
           });
         }
-        //print("Total de entregas pendentes (offline): $pendentes");
       } catch (e) {
-        //print("Erro ao carregar entregas offline: $e");
+        _log("Erro ao carregar entregas offline: $e");
         mostrarMensagem("Erro ao carregar entregas offline!");
       }
     }
@@ -201,21 +252,23 @@ class _HomePageState extends State<HomePage> {
         final data = jsonDecode(response.body);
         return data['success'] == true;
       }
-      //print("Erro grave ao desvincular caminhão: codigo: ${response.statusCode} - ${response.body}");
+      _log(
+        "Erro grave ao desvincular caminhão: codigo: ${response.statusCode}",
+      );
       return false;
     } catch (e) {
-      //print("Erro ao desvincular caminhão: $e");
+      _log("Erro ao desvincular caminhão: $e");
       return false;
     }
   }
 
   Future<void> sincronizarCaminhoes() async {
-    //print("✅ Sistema de splash iniciado!");
+    _log("✅ Sistema de splash iniciado!");
     final usuario = await _dbHelper.buscarUsuarioLocal();
     final token = usuario?['token'];
 
     if (token == null || token.isEmpty) {
-      //print("🔒 Token não encontrado. Faça login primeiro.");
+      _log("🔒 Token não encontrado. Faça login primeiro.");
       return;
     }
 
@@ -230,18 +283,17 @@ class _HomePageState extends State<HomePage> {
 
       if (response.statusCode == 200) {
         final List<dynamic> dados = jsonDecode(response.body);
-        //print(dados);
         await _dbHelper.atualizarCaminhoes(
           List<Map<String, dynamic>>.from(dados),
         );
-        //print("✅ Caminhões sincronizados com sucesso!");
+        _log("✅ Caminhões sincronizados com sucesso!");
       } else if (response.statusCode == 401) {
-        //print("🔒 Token inválido ou expirado. Faça login novamente.");
+        _log("🔒 Token inválido ou expirado. Faça login novamente.");
       } else {
-        //print("⚠️ Erro ao buscar caminhões da API: ${response.statusCode}");
+        _log("⚠️ Erro ao buscar caminhões da API: ${response.statusCode}");
       }
     } catch (e) {
-      //print("📴 Sem conexão, usando dados locais: $e");
+      _log("📴 Sem conexão, usando dados locais: $e");
     }
   }
 
@@ -258,7 +310,7 @@ class _HomePageState extends State<HomePage> {
 
       return response.statusCode == 200;
     } catch (e) {
-      //print("Erro na requisição de troca de veículo: $e");
+      _log("Erro na requisição de troca de veículo: $e");
       return false;
     }
   }
@@ -278,14 +330,57 @@ class _HomePageState extends State<HomePage> {
               permissao == LocationPermission.whileInUse);
     });
 
-    //print("GPS ativo: $gpsAtivo");
+    _log("GPS ativo: $gpsAtivo");
+  }
+
+  Future<bool> validarSenha(String email, String senhaDigitada) async {
+    final usuario = await _dbHelper.buscarUsuarioLocal();
+    if (usuario == null) return false;
+
+    final conexao = await Connectivity().checkConnectivity();
+
+    if (conexao != ConnectivityResult.none) {
+      // ONLINE: tenta validar no servidor usando API de login
+      try {
+        final res = await http.post(
+          Uri.parse("${AuthService().apiUrl}/api/login"),
+          body: {"email": usuario['email'], "password": senhaDigitada},
+        );
+
+        if (res.statusCode == 200) {
+          // login online válido
+          return true;
+        }
+      } catch (_) {
+        // falha no servidor → tenta local
+      }
+    }
+
+    // OFFLINE ou falha no servidor → valida local
+    final hashLocal = usuario['senha_hash'] ?? '';
+    final hashDigitado = AuthService().hashSenha(senhaDigitada);
+
+    return hashLocal == hashDigitado;
   }
 
   void _logout() async {
+    final senha = await pedirSenhaUsuario();
+    if (senha == null || senha.isEmpty) return;
+
+    final valido = await validarSenha(userEmail, senha);
+    if (!valido) {
+      mostrarMensagem("Senha incorreta.");
+      return;
+    }
+
     await _dbHelper.limparUsuarios();
-    if (!mounted) return;
-    //await ForegroundServiceHelper.stopLocationService();
-    await iniciarServico(usuarioToken: '', caminhaoId: 0);
+    await iniciarServico(
+      usuarioToken: '',
+      caminhaoId: 0,
+      paradaLongaMinutos: 10,
+      garagemLat: 0.0,
+      garagemLon: 0.0,
+    );
     if (!mounted) return;
     Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
   }
@@ -297,6 +392,216 @@ class _HomePageState extends State<HomePage> {
         content: Text(texto),
         backgroundColor: const Color.fromARGB(255, 34, 34, 34),
       ),
+    );
+  }
+
+  Future<void> iniciarEntregas() async {
+    final usuario = await _dbHelper.buscarUsuarioLocal();
+    if (usuario == null) return;
+
+    final token = usuario['token'] ?? '';
+    final userId = usuario['id_usuario'] ?? 0;
+    final caminhaoId = userIdCaminhao ?? 0;
+
+    // Verifica conexão
+    final conexao = await Connectivity().checkConnectivity();
+    if (conexao == ConnectivityResult.none) {
+      mostrarMensagem(
+        "É necessário conexão com a internet para iniciar as entregas.",
+      );
+      return;
+    }
+
+    if (caminhaoId == 0 || token.isEmpty || userId == 0) {
+      mostrarMensagem(
+        "Não é possível iniciar entregas sem veículo ou login válido.",
+      );
+      return;
+    }
+
+    _carregarEntregas();
+
+    try {
+      // Pega localização atual
+      Position pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final payload = {
+        'user_id': userId,
+        'caminhao_id': caminhaoId,
+        'inicio_entrega': DateTime.now().toIso8601String(),
+        'latitude': pos.latitude,
+        'longitude': pos.longitude,
+      };
+
+      final res = await http
+          .post(
+            Uri.parse("${_authService.apiUrl}/api/entregas/iniciar"),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw TimeoutException(
+                'O servidor demorou muito para responder. Tente novamente.',
+              );
+            },
+          );
+
+      final data = jsonDecode(res.body);
+
+      if (res.statusCode == 200 && data['success'] == true) {
+        mostrarMensagem(data['message'] ?? "Entregas iniciadas com sucesso!");
+      } else {
+        mostrarMensagem(data['message'] ?? 'Falha ao iniciar entregas.');
+      }
+    } on TimeoutException catch (_) {
+      mostrarMensagem("Tempo de resposta esgotado. Verifique sua conexão.");
+    } catch (e) {
+      mostrarMensagem("Erro ao notificar servidor: $e");
+    }
+  }
+
+  void mostrarConfiguracoesVeiculo() async {
+    final usuario = await _dbHelper.buscarUsuarioLocal();
+    if (usuario == null) return;
+
+    final caminhao = await _dbHelper.buscarCaminhaoPorUsuario(userIdLogado!);
+    if (caminhao == null) {
+      mostrarMensagem(
+        "Não é possível abrir as configurações rastreamento do veículo.",
+      );
+      return;
+    }
+
+    if (!mounted) return;
+
+    String enderecoGaragem = "Carregando...";
+
+    final latStr = caminhao?['garagem_latitude']?.toString();
+    final lonStr = caminhao?['garagem_longitude']?.toString();
+
+    if (latStr != null && lonStr != null) {
+      final lat = double.tryParse(latStr);
+      final lon = double.tryParse(lonStr);
+
+      if (lat != null && lon != null) {
+        try {
+          // 🔒 Garante que permissões foram concedidas
+          LocationPermission permission = await Geolocator.checkPermission();
+          if (permission == LocationPermission.denied ||
+              permission == LocationPermission.deniedForever) {
+            permission = await Geolocator.requestPermission();
+          }
+
+          final placemarks = await placemarkFromCoordinates(lat, lon);
+
+          if (placemarks.isNotEmpty) {
+            final p = placemarks.first;
+            enderecoGaragem =
+                "${p.street ?? ''}, ${p.subLocality ?? ''}, ${p.locality ?? ''} - ${p.administrativeArea ?? ''}";
+          } else {
+            enderecoGaragem = "Endereço não encontrado";
+          }
+        } catch (e) {
+          enderecoGaragem = "Erro ao buscar endereço: ${e.toString()}";
+          _log("❌ Erro Geocoding: $e");
+        }
+      } else {
+        enderecoGaragem = "Coordenadas inválidas";
+      }
+    } else {
+      enderecoGaragem = "Coordenadas não cadastradas";
+    }
+
+    // Converte a cor (se for em formato HEX)
+    Color corCaminhao = Colors.grey;
+    if (caminhao?['cor'] != null && caminhao!['cor'].toString().isNotEmpty) {
+      try {
+        String corStr = caminhao['cor'].toString().replaceAll('#', '');
+        corCaminhao = Color(int.parse('0xFF$corStr'));
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text(
+            "Configurações do Veículo",
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("👤 Motorista: ${usuario?['nome'] ?? '-'}"),
+                Text("📧 Email: ${usuario?['email'] ?? '-'}"),
+                const Divider(height: 15),
+                Text("🚛 Veículo: ${caminhao?['nome'] ?? '-'}"),
+                Text("🪪 Placa: ${caminhao?['placa'] ?? '-'}"),
+                Row(
+                  children: [
+                    const Text("🎨 Cor: "),
+                    Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: corCaminhao,
+                        border: Border.all(color: Colors.black26),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text("🏢 Empresa: ${caminhao?['empresa'] ?? '-'}"),
+                Text("🧾 CNPJ: ${caminhao?['cnpj'] ?? '-'}"),
+                const Divider(height: 15),
+                Text(
+                  "📍 Rastreamento: ${(caminhao?['rastreamento_ligado'] == 1) ? 'Ativo' : 'Desligado'}",
+                  style: TextStyle(
+                    color: (caminhao?['rastreamento_ligado'] == 1)
+                        ? Colors.green
+                        : Colors.red,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  "🕒 Horário rastreamento: ${caminhao?['horario_rastreamento'] ?? '-'}",
+                ),
+                Text(
+                  "📅 Dias rastreamento: ${caminhao?['dias_rastreamento'] ?? '-'}",
+                ),
+                Text(
+                  "⏱️ Parada longa (min): ${caminhao?['parada_longa_minutos'] ?? '-'}",
+                ),
+                const Divider(height: 15),
+                Text("🏠 Garagem:"),
+                Text(
+                  enderecoGaragem,
+                  style: const TextStyle(fontStyle: FontStyle.italic),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Fechar"),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -379,6 +684,19 @@ class _HomePageState extends State<HomePage> {
                       );
 
                       if (sucesso) {
+                        //Para o serviço antes
+                        final isRunning =
+                            await ForegroundServiceHelper.isServiceRunning();
+                        if (isRunning) {
+                          await iniciarServico(
+                            usuarioToken: '',
+                            caminhaoId: 0,
+                            paradaLongaMinutos: 10,
+                            garagemLat: 0.0,
+                            garagemLon: 0.0,
+                          );
+                        }
+
                         // Atualiza SQLite local
                         await _dbHelper.atualizarCaminhaoVinculado(caminhao);
 
@@ -388,15 +706,32 @@ class _HomePageState extends State<HomePage> {
                           userCaminhaoCor = caminhao['cor'];
                           userCaminhaoPlaca = caminhao['placa'];
                           userIdCaminhao = caminhao['id'];
+                          userCaminhaoParadaMin =
+                              caminhao?['parada_longa_minutos'] ?? 10;
+                          userCaminhaoGaragemLat =
+                              double.tryParse(
+                                caminhao?['garagem_latitude']?.toString() ?? '',
+                              ) ??
+                              0.0;
+                          userCaminhaoGaragemLon =
+                              double.tryParse(
+                                caminhao?['garagem_longitude']?.toString() ??
+                                    '',
+                              ) ??
+                              0.0;
                         });
 
                         // Recarrega entregas usando o novo caminhão
+                        await _carregarUsuario();
                         await _carregarEntregas();
 
                         // Inicia serviço de localização com caminhão atualizado
                         await iniciarServico(
                           usuarioToken: usuario?['token'] ?? '',
                           caminhaoId: userIdCaminhao ?? 0,
+                          paradaLongaMinutos: userCaminhaoParadaMin,
+                          garagemLat: userCaminhaoGaragemLat,
+                          garagemLon: userCaminhaoGaragemLon,
                         );
 
                         mostrarMensagem(
@@ -437,6 +772,15 @@ class _HomePageState extends State<HomePage> {
                     return;
                   }
 
+                  final senha = await pedirSenhaUsuario();
+                  if (senha == null || senha.isEmpty) return;
+
+                  final valido = await validarSenha(userEmail, senha);
+                  if (!valido) {
+                    mostrarMensagem("Senha incorreta.");
+                    return;
+                  }
+
                   final sucesso = await _desvincularVeiculo(token);
 
                   if (sucesso) {
@@ -465,7 +809,13 @@ class _HomePageState extends State<HomePage> {
 
                     // Para o serviço de localização
                     //await ForegroundServiceHelper.stopLocationService();
-                    await iniciarServico(usuarioToken: '', caminhaoId: 0);
+                    await iniciarServico(
+                      usuarioToken: '',
+                      caminhaoId: 0,
+                      paradaLongaMinutos: 10,
+                      garagemLat: 0.0,
+                      garagemLon: 0.0,
+                    );
 
                     mostrarMensagem("Veículo desvinculado com sucesso.");
                   } else {
@@ -544,14 +894,20 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _statusCard(String label, String valor, IconData icon) {
+  Widget _statusCard(
+    String label,
+    String valor,
+    IconData icon, {
+    VoidCallback? onTap, // ação ao clicar
+    IconData? botaoIcon, // ícone do botão lateral
+  }) {
     const double cardHeight = 70;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       height: cardHeight,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.9),
+        color: Colors.white.withOpacity(0.9),
         borderRadius: BorderRadius.circular(12),
         boxShadow: const [
           BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(2, 2)),
@@ -559,7 +915,7 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         children: [
-          // Parte branca (texto + ícone principal)
+          // Parte principal do card
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -590,7 +946,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
 
-          // Faixa verde lateral
+          // Faixa lateral com ícone e ação
           Container(
             width: 55,
             height: cardHeight,
@@ -601,7 +957,14 @@ class _HomePageState extends State<HomePage> {
                 bottomRight: Radius.circular(12),
               ),
             ),
-            child: const Icon(Icons.more_horiz, color: Colors.white, size: 26),
+            child: IconButton(
+              icon: Icon(
+                botaoIcon ?? Icons.more_horiz,
+                color: Colors.white,
+                size: 26,
+              ),
+              onPressed: onTap,
+            ),
           ),
         ],
       ),
@@ -784,6 +1147,8 @@ class _HomePageState extends State<HomePage> {
                               "Entregas de hoje",
                               "$pendentes pendentes",
                               Icons.assignment,
+                              onTap: iniciarEntregas,
+                              botaoIcon: Icons.play_arrow,
                             ),
                             const SizedBox(height: 8),
                             _statusCard(
@@ -794,6 +1159,10 @@ class _HomePageState extends State<HomePage> {
                                         : "Ativo (Serviço parado)")
                                   : "Inativo",
                               gpsAtivo ? Icons.gps_fixed : Icons.gps_off,
+                              onTap: () {
+                                mostrarConfiguracoesVeiculo();
+                              },
+                              botaoIcon: Icons.settings,
                             ),
                             const SizedBox(height: 8),
                             _caminhaoCard(
@@ -830,7 +1199,6 @@ class _HomePageState extends State<HomePage> {
                             _botaoCard("Entregas", Icons.local_shipping, () {
                               if (gpsAtivo) {
                                 if (userIdCaminhao! > 0) {
-                                  //print("entrando nas entregas com o id do caminhão: ${userIdCaminhao!}");
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(

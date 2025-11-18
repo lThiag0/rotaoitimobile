@@ -145,9 +145,17 @@ class DBHelper {
             id INTEGER PRIMARY KEY,
             nome TEXT,
             cor TEXT,
+            rastreamento_ligado INTEGER,
             placa TEXT,
+            departamento TEXT,
+            empresa TEXT,
+            cnpj TEXT,
             user_id INTEGER,
-            departamento TEXT
+            horario_rastreamento TEXT,
+            dias_rastreamento TEXT,
+            parada_longa_minutos INTEGER,
+            garagem_latitude REAL,
+            garagem_longitude REAL
           )
         ''');
       },
@@ -580,7 +588,7 @@ class DBHelper {
     final db = await database;
     final batch = db.batch();
 
-    // Limpa tabela antes de atualizar (opcional — garante consistência)
+    // Limpa tabela antes de atualizar (garante consistência)
     await db.delete('caminhoes');
 
     for (var c in caminhoes) {
@@ -588,9 +596,20 @@ class DBHelper {
         'id': c['id'],
         'nome': c['nome'],
         'cor': c['cor'],
+        'rastreamento_ligado': (c['rastreamento_ligado'] == true)
+            ? 1
+            : 0, // bool → int
         'placa': c['placa'],
-        'user_id': c['user_id'],
         'departamento': c['departamento'],
+        'empresa': c['empresa'],
+        'cnpj': c['cnpj'],
+        'user_id': c['user_id'],
+        'horario_rastreamento': c['horario_rastreamento'],
+        // converte lista para string JSON
+        'dias_rastreamento': jsonEncode(c['dias_rastreamento']),
+        'parada_longa_minutos': c['parada_longa_minutos'],
+        'garagem_latitude': c['garagem_latitude'],
+        'garagem_longitude': c['garagem_longitude'],
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
 
